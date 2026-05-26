@@ -1,0 +1,52 @@
+[package]
+name = "imece_core"
+version = "0.1.0"
+edition = "2021"
+description = "IMECE v2.0 - Local-First Autonomous Agent Framework. Zero API dependency. Zero cloud lock-in. Full sovereignty."
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["ai", "agent", "local-first", "llm", "autonomous"]
+categories = ["science", "algorithms", "concurrency"]
+build = "build.rs"
+
+[build-dependencies]
+cmake = "0.1"
+[dependencies]
+# Linear algebra for DMCE computation
+ndarray = "0.16"
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# LanceDB — Rust-native vector database (replaces SQLite-VSS)
+lancedb = "0.27"
+# Lance Arrow extensions (FixedSizeListArrayExt for try_new_from_values)
+lance-arrow = "4"
+# Apache Arrow — required for LanceDB RecordBatch I/O
+arrow-array = "57"
+arrow-schema = "57"
+arrow = { version = "57", features = ["prettyprint"] }
+# Async stream collection for LanceDB query results
+futures = "0.3"
+# Temporary directories for in-memory-like LanceDB instances
+tempfile = "3"
+# Async runtime for Actor Model (Module 3) + LanceDB async ops
+tokio = { version = "1", features = ["full"] }
+# Unique identifiers for memory nodes
+uuid = { version = "1", features = ["v4", "serde"] }
+# Error handling
+thiserror = "1"
+# Async trait support for Actor & Inference traits
+async-trait = "0.1"
+# Logging
+tracing = "0.1"
+# ONNX Runtime — local inference for Voyage-4 Nano embedding model
+ort = "2.0.0-rc.12"
+# HuggingFace Tokenizers — Rust-native fast tokenization
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+[dev-dependencies]
+tokio-test = "0.4"
+approx = "0.5"
+
+[features]
+llama_backend = []
+cuda = ["llama_backend"]
