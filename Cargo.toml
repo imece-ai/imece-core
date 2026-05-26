@@ -2,8 +2,8 @@
 name = "imece_core"
 version = "0.1.0"
 edition = "2021"
-description = "IMECE v2.0 - Local-First Autonomous Agent Framework. Zero API dependency. Zero cloud lock-in. Full sovereignty."
-license = "Apache-2.0"
+description = "IMECE v0.1.0 - Local-First Autonomous Agent Framework. Zero API dependency. Zero cloud lock-in. Full sovereignty."
+license = "AGPL-3.0-only"
 readme = "README.md"
 keywords = ["ai", "agent", "local-first", "llm", "autonomous"]
 categories = ["science", "algorithms", "concurrency"]
