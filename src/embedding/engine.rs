@@ -94,14 +94,14 @@ impl VoyageNanoEngine {
         if !std::path::Path::new(&model_path).exists() {
             return Err(EmbeddingError::ModelNotFound {
                 path: model_path,
-                reason: "Run `python models/export_voyage_nano.py` to download the model."
+                reason: "Ensure the ONNX model file exists at the specified path."
                     .to_string(),
             });
         }
         if !std::path::Path::new(&tokenizer_path).exists() {
             return Err(EmbeddingError::ModelNotFound {
                 path: tokenizer_path,
-                reason: "Run `python models/export_voyage_nano.py` to download the tokenizer."
+                reason: "Ensure the tokenizer.json file exists at the specified path."
                     .to_string(),
             });
         }
