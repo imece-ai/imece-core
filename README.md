@@ -215,22 +215,16 @@ IMECE_GPU_LAYERS=0 cargo run --features llama_backend,cuda
 
 ### Embedding Model Setup
 
-```bash
-pip install huggingface_hub transformers
-python models/export_voyage_nano.py
-```
-
-This places the ONNX model at `models/voyage-4-nano-onnx/model.onnx` and the tokenizer at `models/voyage-4-nano-onnx/tokenizer.json`.
+You must provide an ONNX-exported Voyage-4 Nano model (or similar) and its tokenizer. Place the `model.onnx` and `tokenizer.json` files in a directory of your choice, and pass that directory path to `EmbeddingConfig::model_dir`.
 
 ### Running Tests
 
 ```bash
-# All tests (no llama_backend feature needed for unit tests)
+# Run unit tests
 cargo test
-
-# With llama.cpp backend tests
-cargo test --features llama_backend
 ```
+
+*(Note: Integration tests and runnable examples are maintained in the parent workspace.)*
 
 ---
 
@@ -341,12 +335,14 @@ imece-core/
 └── src/
     ├── lib.rs              # Crate root — re-exports all modules
     ├── memory/
+    │   ├── mod.rs          # Memory module root
     │   ├── node.rs         # MemoryNode (x, τ, ρ, e) definition
     │   ├── store.rs        # In-memory brute-force vector store
     │   ├── lance_store.rs  # LanceDB persistent vector store
     │   ├── chain.rs        # DMCE algorithm & APT truncation
     │   └── error.rs        # Memory error types
     ├── inference/
+    │   ├── mod.rs           # Inference module root
     │   ├── types.rs         # Token, GenerationState, RollbackTarget, InferenceConfig
     │   ├── kv_cache.rs      # KvCacheManager trait & KvCacheController
     │   ├── engine.rs        # InferenceEngine — the execution sandbox loop
@@ -356,11 +352,13 @@ imece-core/
     │   ├── ffi.rs           # Raw llama.cpp C-API FFI bindings
     │   └── error.rs         # Inference error types
     ├── actor/
+    │   ├── mod.rs           # Actor module root
     │   ├── types.rs         # AgentId, Signal, Envelope, MessagePayload
     │   ├── agent.rs         # Agent trait, AgentHandle, spawn_agent
     │   ├── engine.rs        # SwarmEngine — central message router
     │   └── escalation.rs    # EscalationPipeline & AnalysisStage trait
     └── embedding/
+        ├── mod.rs           # Embedding module root
         ├── config.rs        # MrlDimension, OutputPrecision, EmbeddingConfig
         ├── engine.rs        # VoyageNanoEngine — ONNX inference pipeline
         └── error.rs         # Embedding error types
