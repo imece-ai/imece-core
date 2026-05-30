@@ -31,14 +31,9 @@
 //!
 //! ## Model Setup
 //!
-//! Before using the engine, download the ONNX model and tokenizer:
-//! ```bash
-//! pip install huggingface_hub transformers
-//! python models/export_voyage_nano.py
-//! ```
-//!
-//! This places the model at `models/voyage-4-nano-onnx/model.onnx` and
-//! the tokenizer at `models/voyage-4-nano-onnx/tokenizer.json`.
+//! Before using the engine, you must provide the ONNX model and tokenizer.
+//! Place the `model.onnx` and `tokenizer.json` files in a directory and
+//! pass its path to `EmbeddingConfig::model_dir`.
 
 pub mod config;
 pub mod engine;
