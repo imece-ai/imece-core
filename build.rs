@@ -31,7 +31,7 @@ fn main() {
         let cloned = out_dir.join("llama.cpp");
         if !cloned.join("CMakeLists.txt").exists() {
             let status = Command::new("git")
-                .args(&[
+                .args([
                     "clone",
                     "--depth",
                     "1",
