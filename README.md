@@ -1,14 +1,30 @@
-# IMECE Core
+<div align="center">
+  <h1>IMECE Core</h1>
+</div>
 
-**Local-First Autonomous Agent Framework for Edge Devices**
+<div align="center">
+  <h3>Local-First Autonomous Agent Framework for Edge Devices</h3>
+</div>
+
+<div align="center">
+  <a href="https://crates.io/crates/imece_core" target="_blank"><img src="https://img.shields.io/crates/v/imece_core" alt="Crates.io"></a>
+  <a href="https://docs.rs/imece_core" target="_blank"><img src="https://img.shields.io/docsrs/imece_core" alt="docs.rs"></a>
+  <a href="LICENSE" target="_blank"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL v3"></a>
+  <a href="https://x.com/imeceai" target="_blank"><img src="https://img.shields.io/twitter/url/https/twitter.com/imeceai.svg?style=social&label=Follow%20%40imeceai" alt="Twitter / X"></a>
+</div>
+
+<br>
 
 IMECE Core is a Rust-native framework for running autonomous AI agents entirely on-device. It eliminates API dependencies and cloud lock-in by binding directly to [llama.cpp](https://github.com/ggerganov/llama.cpp) for LLM inference, running local embedding models via ONNX Runtime, and orchestrating multi-agent workflows through an async actor system — all optimized for machines with ≤8 GB VRAM.
 
-```
+> [!TIP]
+> **Status:** v0.1.0 — core architecture is implemented and tested. The framework compiles and runs on Linux, macOS, and WSL2. CUDA GPU offloading is supported via a feature flag.
+
+## Quickstart
+
+```bash
 cargo add imece_core
 ```
-
-> **Status:** v0.1.0 — core architecture is implemented and tested. The framework compiles and runs on Linux, macOS, and WSL2. CUDA GPU offloading is supported via a feature flag.
 
 ---
 
@@ -236,6 +252,16 @@ cargo test
 ```
 
 *(Note: Integration tests and runnable examples are maintained in the parent workspace.)*
+
+---
+
+## Examples
+
+Looking for ready-to-run code? We maintain a dedicated repository with practical, progressively complex examples:
+
+👉 **[imece-examples](https://github.com/imece-ai/imece-examples)**
+
+The examples repo demonstrates how to use the framework's standalone modules (like generating local embeddings or running persistent semantic search) and will soon include advanced multi-agent orchestrations.
 
 ---
 
@@ -486,8 +512,6 @@ imece-core/
 
 2. **Python Wrapper (PyIMECE)**
    A Python binding via PyO3/maturin will be provided so that AI/ML engineers can use IMECE Core from Python with a familiar API, while still benefiting from Rust's performance for the underlying inference, memory, and actor operations.
-
-### Areas for Improvement(The following are LLM recommendations and will be evaluated.)
 
 3. **Batch ONNX Inference for Embeddings**
    The current embedding engine processes texts one-at-a-time. Implementing true batch inference at the ONNX level (padding + batched forward pass) would significantly improve throughput when indexing large document collections.
