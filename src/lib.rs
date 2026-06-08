@@ -7,7 +7,7 @@
 //! - `memory`: Chain-of-Memory (CoM) subsystem with DMCE & APT.
 //! - `inference`: KV-Cache Rollback & Execution Guided Generation.
 //! - `actor`: Asynchronous Multi-Agent Swarm via Tokio MPSC.
-//! - `embedding`: Voyage-4 Nano local embedding engine (ONNX Runtime).
+//! - `embedding`: Pluggable local embedding engine (EmbeddingBackend trait).
 
 pub mod actor;
 pub mod embedding;

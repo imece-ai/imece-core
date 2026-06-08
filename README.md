@@ -1,14 +1,44 @@
-# IMECE Core
+<div align="center">
+  <h1>IMECE Core</h1>
+</div>
 
-**Local-First Autonomous Agent Framework for Edge Devices**
+<div align="center">
+  <h3>Local-First Autonomous Agent Framework for Edge Devices</h3>
+</div>
+
+<div align="center">
+  <a href="https://crates.io/crates/imece_core" target="_blank"><img src="https://img.shields.io/crates/v/imece_core" alt="Crates.io"></a>
+  <a href="https://docs.rs/imece_core" target="_blank"><img src="https://img.shields.io/docsrs/imece_core" alt="docs.rs"></a>
+  <a href="LICENSE" target="_blank"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL v3"></a>
+  <a href="https://x.com/imeceai" target="_blank"><img src="https://img.shields.io/twitter/url/https/twitter.com/imeceai.svg?style=social&label=Follow%20%40imeceai" alt="Twitter / X"></a>
+</div>
+
+<br>
 
 IMECE Core is a Rust-native framework for running autonomous AI agents entirely on-device. It eliminates API dependencies and cloud lock-in by binding directly to [llama.cpp](https://github.com/ggerganov/llama.cpp) for LLM inference, running local embedding models via ONNX Runtime, and orchestrating multi-agent workflows through an async actor system — all optimized for machines with ≤8 GB VRAM.
 
-```
+> [!TIP]
+> **Status:** v0.1.0 — core architecture is implemented and tested. The framework compiles and runs on Linux, macOS, and WSL2. CUDA GPU offloading is supported via a feature flag.
+
+## Quickstart
+
+### CPU-Only (Default)
+If you only need the Memory, Actor, and Embedding modules:
+```bash
 cargo add imece_core
 ```
 
-> **Status:** v0.1.0 — core architecture is implemented and tested. The framework compiles and runs on Linux, macOS, and WSL2. CUDA GPU offloading is supported via a feature flag.
+### With LLM Inference (llama.cpp)
+If you want to run local LLMs using the Inference engine, enable the `llama_backend` feature:
+```bash
+cargo add imece_core --features llama_backend
+```
+
+### With CUDA GPU Offloading
+If you want to offload LLM inference to an Nvidia GPU:
+```bash
+cargo add imece_core --features llama_backend,cuda
+```
 
 ---
 
@@ -25,6 +55,17 @@ Most agent frameworks require cloud APIs for inference and embeddings. IMECE tak
 | **Error recovery** | Prompt-reprompt loops (expensive) | KV-Cache "Time Travel" rollback (zero-cost) |
 | **Sandbox** | Docker / cloud functions | Linux namespace jails via `unshare(1)` |
 | **Privacy** | Data leaves the device | Nothing ever leaves the device |
+
+---
+
+## Modularity & Flexibility
+
+IMECE Core is designed as a set of decoupled, pluggable building blocks. You are not forced to use all modules together. Depending on your project requirements:
+
+- **Optional Memory (Chain-of-Memory):** You can bypass Module 1 (Memory) entirely. If your agents do not require contextual memory chains or dynamic evolution, you can pass plain text strings or simple message histories as context directly into your tasks.
+- **Pluggable Vector Stores:** The framework provides a built-in LanceDB store and in-memory stores, but you can swap them out for any external vector database (like pgvector, Qdrant, or Pinecone) by generating embeddings via Module 4 (Embedding) and querying/storing them in your preferred database.
+- **Standalone Inference:** You can use Module 2 (llama.cpp backend + KV-Cache rollback) on its own to build stateless, single-agent sandboxed execution environments without spawning an actor swarm.
+- **Standalone Embeddings:** You can run local embedding generation using Voyage-4 Nano via ONNX Runtime without loading any LLM inference backend.
 
 ---
 
@@ -152,9 +193,9 @@ When an agent is busy inside `handle_message()`, the event loop uses `tokio::sel
 
 **Predefined agent roles:** `Coder`, `Reviewer`, `Planner`, `Executor`, `Custom`.
 
-### Module 4 — Embedding (Voyage-4 Nano)
+### Module 4 — Embedding Subsystem
 
-Local embedding engine powered by the **Voyage-4 Nano** model (180M non-embedding + 160M embedding parameters) running via ONNX Runtime. Zero Python runtime dependency.
+Pluggable embedding architecture (`EmbeddingBackend` trait) with a primary local engine powered by the **Voyage-4 Nano** model (180M non-embedding + 160M embedding parameters) running via ONNX Runtime. Zero Python runtime dependency.
 
 **Pipeline:**
 
@@ -215,7 +256,7 @@ IMECE_GPU_LAYERS=0 cargo run --features llama_backend,cuda
 
 ### Embedding Model Setup
 
-You must provide an ONNX-exported Voyage-4 Nano model (or similar) and its tokenizer. Place the `model.onnx` and `tokenizer.json` files in a directory of your choice, and pass that directory path to `EmbeddingConfig::model_dir`.
+You must provide an ONNX-exported Voyage-4 Nano model (or similar) and its tokenizer. Place the `model.onnx` and `tokenizer.json` files in a directory of your choice, and pass that directory path to `VoyageNanoConfig::model_dir`.
 
 ### Running Tests
 
@@ -225,6 +266,16 @@ cargo test
 ```
 
 *(Note: Integration tests and runnable examples are maintained in the parent workspace.)*
+
+---
+
+## Examples
+
+Looking for ready-to-run code? We maintain a dedicated repository with practical, progressively complex examples:
+
+👉 **[imece-examples](https://github.com/imece-ai/imece-examples)**
+
+The examples repo demonstrates how to use the framework's standalone modules (like generating local embeddings or running persistent semantic search) and will soon include advanced multi-agent orchestrations.
 
 ---
 
@@ -278,6 +329,86 @@ println!("Output: {}", session.final_text);
 println!("Rollbacks: {}", session.total_rollbacks);
 ```
 
+#### Concrete Wiring: Constructing an `InferenceEngine` with Real Types
+
+The example above uses abstract variable names. Here is the full dependency injection
+showing how to construct each concrete component and wire them together:
+
+```rust
+use std::sync::Arc;
+use imece_core::inference::backend::{LlamaCppBackend, LlamaCppKvCache, AsyncLlamaBackend};
+use imece_core::inference::kv_cache::KvCacheController;
+use imece_core::inference::sandbox_executor::ResilientExecutor;
+use imece_core::inference::engine::InferenceEngine;
+use imece_core::inference::types::InferenceConfig;
+
+// Step 1: Load the llama.cpp backend (blocking FFI — do this before async code).
+//   - model_path: path to a GGUF model file
+//   - n_ctx: context window size (0 = use model default)
+//   - n_threads: CPU threads for inference
+let backend = Arc::new(LlamaCppBackend::load("models/qwen2.5-7b.Q4_K_M.gguf", 4096, 8)?);
+
+// Step 2: Create the Tokio-safe async wrapper.
+//   AsyncLlamaBackend offloads blocking llama_decode calls (~50-500ms)
+//   to spawn_blocking, preventing Tokio runtime stalls.
+let async_backend = AsyncLlamaBackend::new(Arc::clone(&backend));
+
+// Step 3: Create the KV-Cache manager from the same Arc<LlamaCppBackend>.
+//   The Arc ensures the llama context pointer remains valid as long as
+//   either the async_backend or kv_cache holds a reference.
+//   - seq_id: 0 (primary generation sequence)
+//   - initial_position: 0 (empty cache)
+let kv_cache = LlamaCppKvCache::new(Arc::clone(&backend), 0, 0);
+
+// Step 4: Wrap the KV-Cache manager in a controller (adds rollback logic + telemetry).
+let kv_controller = KvCacheController::new(kv_cache);
+
+// Step 5: Create the sandboxed executor.
+//   ResilientExecutor probes namespace support at startup and falls back
+//   to ProcessExecutor when unprivileged user namespaces are blocked.
+let executor = ResilientExecutor::new();
+
+// Step 6: Configure the inference engine.
+let config = InferenceConfig {
+    max_tokens: 2048,
+    temperature: 0.7,
+    max_rollback_retries: 3,
+    ..Default::default()
+};
+
+// Step 7: Assemble the engine — all four components are injected here.
+//   Generic parameters are inferred: InferenceEngine<AsyncLlamaBackend, LlamaCppKvCache, ResilientExecutor>
+let mut engine = InferenceEngine::new(async_backend, kv_controller, executor, config);
+
+// Run inference.
+let session = engine.run("Write a Python function to sort a list").await?;
+println!("Output: {}", session.final_text);
+println!("Rollbacks: {}", session.total_rollbacks);
+```
+
+#### Injecting the Engine into an `InferenceAgent` (Actor Swarm)
+
+To use the engine inside the multi-agent swarm (Module 3), wrap it in an
+`InferenceAgent` and spawn it via `SwarmEngine`:
+
+```rust
+use imece_core::actor::engine::SwarmEngine;
+
+// Build the engine as shown above...
+let engine = InferenceEngine::new(async_backend, kv_controller, executor, config);
+
+// Create the swarm and get the outbox sender for streaming.
+let mut swarm = SwarmEngine::new(64, 32);
+let outbox_tx = swarm.outbox_sender();
+
+// Wrap the engine in an InferenceAgent.
+// The agent streams TextChunk envelopes via outbox_tx during generation.
+let inference_agent = InferenceAgent::new(engine, outbox_tx);
+
+// Spawn the agent — it now runs in its own Tokio task.
+let inference_id = swarm.spawn(inference_agent);
+```
+
 ### Actor — Multi-Agent Swarm
 
 ```rust
@@ -302,25 +433,24 @@ swarm.run().await;
 ### Embedding — Local Vector Generation
 
 ```rust
-use imece_core::embedding::config::{EmbeddingConfig, MrlDimension, OutputPrecision};
-use imece_core::embedding::engine::VoyageNanoEngine;
+use imece_core::embedding::config::{EmbeddingServiceConfig, VoyageNanoConfig, MrlDimension, OutputPrecision};
 
-let config = EmbeddingConfig {
+let config = EmbeddingServiceConfig::VoyageNano(VoyageNanoConfig {
     model_dir: "models/voyage-4-nano-onnx".into(),
     mrl_dimension: MrlDimension::D256,
     output_precision: OutputPrecision::Int8,
     num_threads: 4,
     max_length: 512,
-};
+});
 
-let engine = VoyageNanoEngine::new(config)?;
+let backend = config.create_backend()?;
 
 // Embed a query (automatically prepends the query task prompt)
-let query_emb = engine.embed_query("How does Rust prevent data races?")?;
+let query_emb = backend.embed_query("How does Rust prevent data races?")?;
 let embedding_f32 = query_emb.to_f32(); // Array1<f32> for MemoryStore
 
 // Embed a document (automatically prepends the document task prompt)
-let doc_emb = engine.embed_document("Rust uses an ownership system...")?;
+let doc_emb = backend.embed_document("Rust uses an ownership system...")?;
 ```
 
 ---
@@ -359,9 +489,10 @@ imece-core/
     │   └── escalation.rs    # EscalationPipeline & AnalysisStage trait
     └── embedding/
         ├── mod.rs           # Embedding module root
-        ├── config.rs        # MrlDimension, OutputPrecision, EmbeddingConfig
-        ├── engine.rs        # VoyageNanoEngine — ONNX inference pipeline
-        └── error.rs         # Embedding error types
+        ├── backend.rs       # EmbeddingBackend trait, EmbeddingOutput, math utilities
+        ├── config.rs        # EmbeddingServiceConfig, VoyageNanoConfig
+        ├── engine.rs        # VoyageNanoEngine implements EmbeddingBackend
+        └── error.rs         # Embedding error types (BackendError)
 ```
 
 ---
@@ -390,30 +521,25 @@ imece-core/
 
 ### Areas for Improvement
 
-1. **Pluggable Embedding Backend**
-   The `embedding` module is currently built around the Voyage-4 Nano model. The architecture will be refactored to provide a generic `EmbeddingBackend` trait, allowing other embedding models (e.g., `all-MiniLM-L6-v2`, `nomic-embed`, `BGE-M3`) to be integrated as drop-in replacements.
-
-2. **Proactive KV-Cache Rollback Error Prevention**
+1. **Proactive KV-Cache Rollback Error Prevention**
    The "Time Travel" rollback protocol can currently enter error loops when repeated rollbacks fail at the same position. This is mitigated by a configurable retry limit (`max_rollback_retries`), but a more robust solution is planned: injecting pre-emptive context about the error *cause* into the LLM prompt before the rollback point, so the model avoids regenerating the same faulty pattern.
 
-3. **Python Wrapper (PyIMECE)**
+2. **Python Wrapper (PyIMECE)**
    A Python binding via PyO3/maturin will be provided so that AI/ML engineers can use IMECE Core from Python with a familiar API, while still benefiting from Rust's performance for the underlying inference, memory, and actor operations.
 
-### Areas for Improvement(The following are LLM recommendations and will be evaluated.)
-
-4. **Batch ONNX Inference for Embeddings**
+3. **Batch ONNX Inference for Embeddings**
    The current embedding engine processes texts one-at-a-time. Implementing true batch inference at the ONNX level (padding + batched forward pass) would significantly improve throughput when indexing large document collections.
 
-5. **Persistent Agent State**
+4. **Persistent Agent State**
    Agents currently lose state on shutdown. Serializable agent checkpoints (backed by LanceDB or a lightweight KV store) would enable long-running agent sessions that survive process restarts.
 
-6. **seccomp-bpf for Sandbox Hardening**
+5. **seccomp-bpf for Sandbox Hardening**
    The `BubblejailExecutor` currently uses namespace isolation. Adding a seccomp-bpf syscall filter would further restrict the kernel attack surface of sandboxed code execution.
 
-7. **macOS Sandbox Support**
+6. **macOS Sandbox Support**
    The `ActionExecutor` trait is designed for cross-platform sandboxing. A `SeatbeltExecutor` using macOS's `sandbox-exec` API is planned for native macOS support without Docker.
 
-8. **Windows Job Objects Executor**
+7. **Windows Job Objects Executor**
    Similarly, a `JobObjectExecutor` using Windows Job Objects API would provide native process isolation on Windows without WSL2.
 
 ---
