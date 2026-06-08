@@ -3,6 +3,12 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
+    // docs.rs environment guard: skip C++ build and git clone
+    if env::var("DOCS_RS").is_ok() {
+        println!("cargo:warning=IMECE: docs.rs build detected. Skipping llama.cpp build.");
+        return;
+    }
+
     // Register custom cfg so `#[cfg(imece_gpu_available)]` doesn't warn.
     println!("cargo::rustc-check-cfg=cfg(imece_gpu_available)");
 
