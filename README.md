@@ -18,12 +18,26 @@
 IMECE Core is a Rust-native framework for running autonomous AI agents entirely on-device. It eliminates API dependencies and cloud lock-in by binding directly to [llama.cpp](https://github.com/ggerganov/llama.cpp) for LLM inference, running local embedding models via ONNX Runtime, and orchestrating multi-agent workflows through an async actor system — all optimized for machines with ≤8 GB VRAM.
 
 > [!TIP]
-> **Status:** v0.1.1 — core architecture is implemented and tested. The framework compiles and runs on Linux, macOS, and WSL2. CUDA GPU offloading is supported via a feature flag.
+> **Status:** v0.1.0 — core architecture is implemented and tested. The framework compiles and runs on Linux, macOS, and WSL2. CUDA GPU offloading is supported via a feature flag.
 
 ## Quickstart
 
+### CPU-Only (Default)
+If you only need the Memory, Actor, and Embedding modules:
 ```bash
 cargo add imece_core
+```
+
+### With LLM Inference (llama.cpp)
+If you want to run local LLMs using the Inference engine, enable the `llama_backend` feature:
+```bash
+cargo add imece_core --features llama_backend
+```
+
+### With CUDA GPU Offloading
+If you want to offload LLM inference to an Nvidia GPU:
+```bash
+cargo add imece_core --features llama_backend,cuda
 ```
 
 ---
