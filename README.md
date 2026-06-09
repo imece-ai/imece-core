@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>IMECE Core</h1.01
+  <h1>IMECE Core</h1>
 </div>
 
 <div align="center">
