@@ -1,10 +1,10 @@
 [package]
 name = "imece_core"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 repository = "https://github.com/imece-ai/imece-core"
 homepage = "https://github.com/imece-ai"
-description = "IMECE v0.1.1 - Local-First Autonomous Agent Framework. Zero API dependency. Zero cloud lock-in. Full sovereignty."
+description = "IMECE v0.1.2 - Local-First Autonomous Agent Framework. Zero API dependency. Zero cloud lock-in. Full sovereignty."
 license = "AGPL-3.0-only"
 readme = "README.md"
 keywords = ["ai", "agent", "llm", "machine-learning", "local-first"]
