@@ -13,9 +13,11 @@ categories = ["artificial-intelligence", "asynchronous", "concurrency"]
 build = "build.rs"
 exclude = [
     "/.github",
-#    "/assets",
+    "/assets",
+    "/CODE_OF_CONDUCT.md",
+    "/CONTRIBUTING.md",
+    "/CLA.md",
 ]
-
 
 [build-dependencies]
 cmake = "0.1"
