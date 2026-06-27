@@ -16,7 +16,7 @@
 <br>
 
 <p align="center">
-  <img src="assets/demo.gif" alt="IMECE Core — KV-Cache Time Travel Rollback Demo" width="720">
+  <img src="assets/demo.gif" alt="IMECE Core — KV-Cache Time Travel Rollback Demo" width="360">
 </p>
 
 > *Note: The initial prompt, streaming generation, execution results, and final session statistics in the demo are 100% literal console outputs from the `06-rollback-agent` example. However, the visual "token-erasing" effect is a conceptual visualization. In reality, IMECE erases the erroneous tokens directly from the GPU/RAM KV-Cache invisibly, resuming generation instantly without polluting standard output or recalculating the prompt.*
@@ -83,17 +83,6 @@ IMECE Core is designed as a set of decoupled, pluggable building blocks. You are
 - **Pluggable Vector Stores:** The framework provides a built-in LanceDB store and in-memory stores, but you can swap them out for any external vector database (like pgvector, Qdrant, or Pinecone) by generating embeddings via Module 4 (Embedding) and querying/storing them in your preferred database.
 - **Standalone Inference:** You can use Module 2 (llama.cpp backend + KV-Cache rollback) on its own to build stateless, single-agent sandboxed execution environments without spawning an actor swarm.
 - **Pluggable Embeddings:** Module 4 defines an [`EmbeddingBackend`](https://docs.rs/imece_core/latest/imece_core/embedding/backend/trait.EmbeddingBackend.html) trait. The framework ships with a Voyage-4 Nano engine via ONNX Runtime, but you can implement the trait for any embedding model (e.g., `all-MiniLM-L6-v2`, `nomic-embed`, `bge-small`) or connect to an external embedding service. You can also run embeddings standalone without loading any LLM inference backend.
-
----
-
-## Modularity & Flexibility
-
-IMECE Core is designed as a set of decoupled, pluggable building blocks. You are not forced to use all modules together. Depending on your project requirements:
-
-- **Optional Memory (Chain-of-Memory):** You can bypass Module 1 (Memory) entirely. If your agents do not require contextual memory chains or dynamic evolution, you can pass plain text strings or simple message histories as context directly into your tasks.
-- **Pluggable Vector Stores:** The framework provides a built-in LanceDB store and in-memory stores, but you can swap them out for any external vector database (like pgvector, Qdrant, or Pinecone) by generating embeddings via Module 4 (Embedding) and querying/storing them in your preferred database.
-- **Standalone Inference:** You can use Module 2 (llama.cpp backend + KV-Cache rollback) on its own to build stateless, single-agent sandboxed execution environments without spawning an actor swarm.
-- **Standalone Embeddings:** You can run local embedding generation using Voyage-4 Nano via ONNX Runtime without loading any LLM inference backend.
 
 ---
 
