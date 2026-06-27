@@ -86,6 +86,17 @@ IMECE Core is designed as a set of decoupled, pluggable building blocks. You are
 
 ---
 
+## Modularity & Flexibility
+
+IMECE Core is designed as a set of decoupled, pluggable building blocks. You are not forced to use all modules together. Depending on your project requirements:
+
+- **Optional Memory (Chain-of-Memory):** You can bypass Module 1 (Memory) entirely. If your agents do not require contextual memory chains or dynamic evolution, you can pass plain text strings or simple message histories as context directly into your tasks.
+- **Pluggable Vector Stores:** The framework provides a built-in LanceDB store and in-memory stores, but you can swap them out for any external vector database (like pgvector, Qdrant, or Pinecone) by generating embeddings via Module 4 (Embedding) and querying/storing them in your preferred database.
+- **Standalone Inference:** You can use Module 2 (llama.cpp backend + KV-Cache rollback) on its own to build stateless, single-agent sandboxed execution environments without spawning an actor swarm.
+- **Standalone Embeddings:** You can run local embedding generation using Voyage-4 Nano via ONNX Runtime without loading any LLM inference backend.
+
+---
+
 ## Architecture
 
 IMECE Core is organized into four modules that compose into a complete agent pipeline. The diagram below shows the runtime data flow from the client application down through the agent swarm, into the inference and memory engines, and finally to the shared embedding subsystem:
