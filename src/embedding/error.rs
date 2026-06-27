@@ -1,6 +1,15 @@
 //! # Embedding Error Types
 //!
-//! Unified error types for the pluggable embedding subsystem.
+//! Unified error types for the embedding subsystem.
+//!
+//! All embedding operations return [`EmbeddingResult<T>`] which wraps a
+//! `Result<T, EmbeddingError>`. Error variants cover the main failure modes:
+//!
+//! - **Model load failures**: Missing `model.onnx` or `tokenizer.json` files.
+//! - **ONNX Runtime errors**: Session execution failures, memory allocation.
+//! - **Tokenization limits**: Inputs exceeding the context window limit.
+//! - **Tensor shape mismatches**: Unexpected output tensor dimensions from custom models.
+//!
 //! Backend-specific errors (ORT, tokenizer, etc.) are wrapped in the
 //! [`EmbeddingError::BackendError`] variant, keeping the public API
 //! independent of any particular model engine.

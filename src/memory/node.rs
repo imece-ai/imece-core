@@ -1,15 +1,45 @@
 //! # Memory Node
 //!
-//! Atomic unit of the ImeceMemory flat-index.
+//! Atomic unit of the IMECE flat-index memory database.
 //!
-//! Each node corresponds to:
-//!   `m_{i,j} = (x, τ, ρ, e)`
+//! Each node represents a single interaction in an agent's memory,
+//! corresponding to the formal definition:
+//!
+//! ```text
+//! m_{i,j} = (x, τ, ρ, e)
+//! ```
 //!
 //! Where:
-//!   - `x` : Text payload
+//!   - `x` : Text payload (the content of the interaction)
 //!   - `τ` : Timestamp (Unix Epoch, seconds)
-//!   - `ρ` : Role (user | agent | system)
-//!   - `e` : Embedding vector `e ∈ ℝ^d`
+//!   - `ρ` : Role — [`Role::User`], [`Role::Agent`], or [`Role::System`]
+//!   - `e` : Embedding vector `e ∈ ℝ^d` (dimension determined by the
+//!           embedding model, e.g., 256 for Voyage-4 Nano with MRL truncation)
+//!
+//! ## Example
+//!
+//! ```rust
+//! use imece_core::memory::node::{MemoryNode, Role};
+//! use ndarray::Array1;
+//!
+//! // Create a user interaction node
+//! let embedding = Array1::from_vec(vec![0.1f32; 256]);
+//! let node = MemoryNode::new(
+//!     "How does Rust prevent data races?".into(),
+//!     Role::User,
+//!     embedding,
+//! );
+//!
+//! assert_eq!(node.role, Role::User);
+//! assert_eq!(node.dim(), 256);
+//! assert!(node.timestamp > 0);
+//! ```
+//!
+//! ## Serialization
+//!
+//! `MemoryNode` derives `Serialize` and `Deserialize` for JSON/TOML
+//! persistence. The embedding vector is serialized as a flat `Vec<f32>`
+//! array for interoperability.
 
 use ndarray::Array1;
 use serde::{Deserialize, Serialize};

@@ -1,15 +1,18 @@
 //! # LanceDB Memory Store
 //!
-//! Production-grade persistent memory store leveraging LanceDB (Rust-native)
-//! for efficient vector similarity search via the Lance columnar format.
+//! Production-grade persistent memory store leveraging [LanceDB](https://lancedb.com/)
+//! (Rust-native) for efficient vector similarity search via the Lance
+//! columnar format.
+//!
 //! Replaces the brute-force `MemoryStore` when node counts cross the
-//! threshold where ANN indexing becomes beneficial.
+//! threshold where ANN indexing becomes beneficial, or when persistent
+//! agent memory is required.
 //!
 //! ## Architecture
 //!
-//! LanceDB stores data in the Lance columnar format on local disk (or cloud
-//! object stores). Each memory node is stored as a row in a single table
-//! `memory_nodes` with the following Arrow schema:
+//! LanceDB stores data in the Lance columnar format on local disk. Each
+//! memory node is stored as a row in the `memory_nodes` table with the
+//! following Arrow schema:
 //!
 //! | Column      | Arrow Type                         | Description                       |
 //! |-------------|------------------------------------|-----------------------------------|
@@ -19,8 +22,37 @@
 //! | `timestamp` | `UInt64`                           | Unix epoch seconds `τ`            |
 //! | `embedding` | `FixedSizeList<Float32>(dim)`      | Dense vector `e ∈ ℝ^d`           |
 //!
-//! Vector search uses LanceDB's built-in L2/Cosine nearest-neighbor engine,
-//! with optional IVF-PQ indexing for datasets exceeding ~50k nodes.
+//! Vector search uses LanceDB's built-in L2 nearest-neighbor engine,
+//! with optional IVF-PQ indexing for datasets exceeding ~10k nodes.
+//! L2 distances are automatically converted back to approximate cosine
+//! similarities to maintain API compatibility with the DMCE engine.
+//!
+//! ## Usage
+//!
+//! ```rust,no_run
+//! use imece_core::memory::lance_store::LanceMemoryStore;
+//! use imece_core::memory::node::{MemoryNode, Role};
+//! use ndarray::Array1;
+//!
+//! # tokio_test::block_on(async {
+//! // Initialize a persistent database on disk
+//! let mut store = LanceMemoryStore::new("data/agent_memory", 256).await.unwrap();
+//!
+//! // Insert nodes (batching is highly recommended for performance)
+//! let nodes = vec![
+//!     MemoryNode::new("Node 1".into(), Role::System, Array1::from_vec(vec![0.1; 256])),
+//!     MemoryNode::new("Node 2".into(), Role::User, Array1::from_vec(vec![0.2; 256])),
+//! ];
+//! store.insert_batch(&nodes).await.unwrap();
+//!
+//! // Create an IVF-PQ index once you have sufficient data (>10k rows)
+//! // store.create_index().await.unwrap();
+//!
+//! // Retrieve Top-K candidates for DMCE
+//! let query = Array1::from_vec(vec![0.15; 256]);
+//! let results = store.top_k(&query, 10, &[]).await.unwrap();
+//! # });
+//! ```
 //!
 //! ## Advantages over SQLite-VSS
 //!

@@ -1,8 +1,8 @@
 //! # Dynamic Memory Chain Evolution (DMCE) & Adaptive Path Truncation (APT)
 //!
 //! Implements the core chain-building algorithm from:
-//! "Chain-of-Memory: Lightweight Memory Construction with Dynamic Evolution
-//!  for LLM Agents" (arXiv:2601.14287v1).
+//! [Chain-of-Memory: Lightweight Memory Construction with Dynamic Evolution
+//!  for LLM Agents (arXiv:2601.14287v1)](https://arxiv.org/abs/2601.14287v1).
 //!
 //! ## Algorithm Overview
 //!
@@ -24,6 +24,41 @@
 //!    s*_t < β × s_{t-1}
 //!    ```
 //!    Terminate chain evolution. This prevents semantic drift and VRAM bloat.
+//!
+//! ## Hyperparameter Guide
+//!
+//! | Parameter | Symbol | Range | Effect |
+//! |-----------|--------|-------|--------|
+//! | `beta` | β | `[0, 1]` | Lower = aggressive truncation (shorter chains, less VRAM) |
+//! | `top_k` | K | `≥ 1` | Larger = more candidates, better quality, slower |
+//! | `max_chain_len` | — | `≥ 1` | Hard cap on chain length |
+//!
+//! **Recommended defaults for ≤8GB VRAM:** `β=0.6`, `K=20`, `max_chain_len=8`.
+//!
+//! ## Usage
+//!
+//! ```rust
+//! use imece_core::memory::store::MemoryStore;
+//! use imece_core::memory::node::{MemoryNode, Role};
+//! use imece_core::memory::chain::DmceEngine;
+//! use ndarray::Array1;
+//!
+//! let mut store = MemoryStore::new_in_memory(3).unwrap();
+//! store.insert(&MemoryNode::new(
+//!     "Paris is in France".into(), Role::User,
+//!     Array1::from_vec(vec![0.95, 0.05, 0.0]),
+//! )).unwrap();
+//!
+//! let engine = DmceEngine::new(0.6, 20, 8);
+//! let query = Array1::from_vec(vec![1.0, 0.0, 0.0]);
+//!
+//! // Simple: get the chain
+//! let chain = engine.evolve(&store, &query);
+//!
+//! // With diagnostics: get chain + telemetry
+//! let result = engine.evolve_with_diagnostics(&store, &query);
+//! println!("Steps: {}, APT triggered: {}", result.steps_executed, result.apt_triggered);
+//! ```
 
 use ndarray::Array1;
 use tracing::{debug, trace};

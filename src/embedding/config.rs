@@ -1,6 +1,32 @@
 //! # Embedding Configuration
 //!
-//! Configuration types for the pluggable embedding subsystem.
+//! Strongly-typed configuration structures for embedding backends.
+//!
+//! This module provides the configuration schema for initializing an
+//! [`EmbeddingBackend`](super::backend::EmbeddingBackend). The root
+//! configuration type is [`EmbeddingServiceConfig`], a tagged enum that
+//! delegates to the specific backend's configuration struct.
+//!
+//! ## Factory Pattern
+//!
+//! To instantiate a backend, construct an `EmbeddingServiceConfig` and
+//! call [`create_backend()`](EmbeddingServiceConfig::create_backend).
+//!
+//! ```rust,no_run
+//! use imece_core::embedding::config::{
+//!     EmbeddingServiceConfig, VoyageNanoConfig, MrlDimension, OutputPrecision
+//! };
+//!
+//! let config = EmbeddingServiceConfig::VoyageNano(VoyageNanoConfig {
+//!     model_dir: "models/voyage-4-nano-onnx".into(),
+//!     mrl_dimension: MrlDimension::D256,        // Truncate to 256-d
+//!     output_precision: OutputPrecision::Int8,  // Native int8 quantization
+//!     num_threads: 4,                           // ONNX intra-op threads
+//!     max_length: 512,                          // Context window
+//! });
+//!
+//! let backend = config.create_backend().unwrap();
+//! ```
 //!
 //! ## Architecture
 //!

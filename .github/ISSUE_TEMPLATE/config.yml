@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question
+    url: https://github.com/imece-ai/imece-core/discussions/new?category=q-a
+    about: Ask the community for help with using IMECE Core
+  - name: Share an idea
+    url: https://github.com/imece-ai/imece-core/discussions/new?category=ideas
+    about: Share ideas for new features with the community
+  - name: Commercial Licensing / Enterprise Support
+    url: https://imece.ai/contact
+    about: For inquiries regarding commercial licenses, avoiding AGPL obligations, or professional support.

@@ -1,9 +1,36 @@
 //! # Embedding Backend Trait
 //!
-//! Defines the [`EmbeddingBackend`] trait — the core abstraction for pluggable
-//! local embedding models. All backends implement this trait and produce
-//! [`EmbeddingOutput`] values that integrate with the memory subsystem.
+//! Core definitions for the pluggable embedding subsystem.
 //!
+//! This module defines the [`EmbeddingBackend`] trait, which abstracts
+//! the underlying embedding generation logic. You can implement this trait
+//! to support any local model architecture (e.g., ONNX, candle, tch-rs)
+//! or even to proxy requests to an external API, though local inference
+//! is the primary design goal.
+//!
+//! ## Example: Custom Backend
+//!
+//! ```rust
+//! use imece_core::embedding::backend::{EmbeddingBackend, EmbeddingOutput};
+//! use imece_core::embedding::error::EmbeddingResult;
+//! use ndarray::Array1;
+//!
+//! struct MockBackend { dim: usize }
+//!
+//! impl EmbeddingBackend for MockBackend {
+//!     fn name(&self) -> &str { "mock" }
+//!
+//!     fn dimension(&self) -> usize { self.dim }
+//!
+//!     fn embed_query(&self, _text: &str) -> EmbeddingResult<EmbeddingOutput> {
+//!         Ok(EmbeddingOutput::Float32(Array1::from_vec(vec![0.1; self.dim])))
+//!     }
+//!
+//!     fn embed_document(&self, _text: &str) -> EmbeddingResult<EmbeddingOutput> {
+//!         Ok(EmbeddingOutput::Float32(Array1::from_vec(vec![0.2; self.dim])))
+//!     }
+//! }
+//! ```
 //! ## Shared Utilities
 //!
 //! [`l2_normalize`] and [`quantize_int8`] are provided as public helpers for

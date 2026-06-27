@@ -61,18 +61,34 @@ const BACKEND_NAME: &str = "voyage-4-nano";
 // VoyageNanoEngine
 // ---------------------------------------------------------------------------
 
-/// The Voyage-4 Nano local embedding engine.
+/// # Voyage-4 Nano Engine
 ///
-/// Loads the ONNX-exported model and HuggingFace tokenizer from a local
-/// directory. Produces embeddings with configurable MRL dimensionality
-/// and optional int8 quantization via the [`EmbeddingBackend`] trait.
+/// The default shipped local inference backend for the embedding subsystem,
+/// powered by [ONNX Runtime](https://onnxruntime.ai/).
 ///
-/// # Thread Safety
+/// This engine executes the Voyage-4 Nano model entirely on-device. It
+/// automatically manages the tokenization pipeline (via HuggingFace
+/// `tokenizers`) and handles the tensor operations required for Matryoshka
+/// Truncation and int8 Quantization.
 ///
-/// The ONNX Runtime `Session::run` requires exclusive (`&mut`) access
-/// and is **not** thread-safe for concurrent calls. The session is
-/// wrapped in a [`Mutex`] to serialize inference from multiple threads.
-/// The tokenizer is immutable after loading.
+/// ## Optimizations
+///
+/// 1. **MRL Truncation**: Extracts the first `D` dimensions of the 2048-d
+///    output vector and re-normalizes them.
+/// 2. **Int8 Quantization**: Converts float32 output into `i8` arrays,
+///    mapping the `-1.0` to `1.0` range into `-127` to `127`.
+///
+/// ## ONNX Initialization
+///
+/// The `ort` crate requires the ONNX Runtime environment to be initialized
+/// exactly once per process. This engine handles initialization automatically
+/// during `VoyageNanoEngine::new()`.
+///
+/// ## Usage via Config
+///
+/// It is recommended to instantiate this engine via the
+/// [`EmbeddingServiceConfig::create_backend`](super::config::EmbeddingServiceConfig::create_backend)
+/// factory rather than calling `VoyageNanoEngine::new()` directly.
 pub struct VoyageNanoEngine {
     /// ONNX Runtime inference session, mutex-guarded because
     /// `Session::run` requires `&mut self`.

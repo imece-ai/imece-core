@@ -216,6 +216,111 @@ impl ExecutionOutcome {
 }
 
 // ---------------------------------------------------------------------------
+// RollbackErrorPrevention
+// ---------------------------------------------------------------------------
+
+/// Configuration for proactive rollback error prevention.
+///
+/// When enabled, the engine tracks per-position failure history during a
+/// session. On repeated failure at the same rollback position, the
+/// observation injected into the KV-Cache includes a cumulative summary
+/// of all prior failed attempts — including the **erased content** (what
+/// the model generated) and the error that caused the rollback. This
+/// gives the LLM the context it needs to avoid repeating the same mistake.
+///
+/// When disabled (the default), behavior is identical to the plain
+/// single-observation injection with no tracking overhead.
+#[derive(Debug, Clone)]
+pub struct RollbackErrorPrevention {
+    /// Whether the feature is enabled.
+    pub enabled: bool,
+
+    /// Maximum number of prior failure records to retain per rollback
+    /// position. When the limit is reached, the oldest record is dropped.
+    /// Prevents unbounded context growth in pathological cases.
+    pub max_history_per_position: usize,
+
+    /// Maximum bytes of erased content to retain per failure record.
+    /// The erased content is the text the model generated before the
+    /// rollback erased it — critical for the model to understand *what*
+    /// it tried. Trailing content is preserved (the end is usually
+    /// most relevant to the error).
+    pub max_erased_content_bytes: usize,
+
+    /// Maximum bytes of the error message (stderr / validator critique)
+    /// to retain per failure record.
+    pub max_error_message_bytes: usize,
+}
+
+impl Default for RollbackErrorPrevention {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_history_per_position: 3,
+            max_erased_content_bytes: 512,
+            max_error_message_bytes: 256,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FailureRecord
+// ---------------------------------------------------------------------------
+
+/// A record of a single failed attempt at a rollback position.
+///
+/// Captures both *what the model generated* (erased from the KV-Cache
+/// by the rollback) and *why it failed* (error message from the sandbox,
+/// validator, or timeout). Together these give the model full context
+/// for self-correction on subsequent attempts.
+#[derive(Debug, Clone)]
+pub(crate) struct FailureRecord {
+    /// The content the model generated that was subsequently erased.
+    /// Captured from `GenerationState::text_range()` before the rollback
+    /// truncates the token buffer.
+    pub erased_content: String,
+
+    /// The error that caused the rollback — stderr output, a validator
+    /// critique, a timeout message, etc.
+    pub error_message: String,
+
+    /// Exit code from the sandbox executor.
+    /// Conventional values: ≥0 for process exit codes, -1 for timeout,
+    /// -2 for validator rejection.
+    pub exit_code: i32,
+}
+
+impl FailureRecord {
+    /// Create a new failure record, truncating fields to the given caps.
+    pub fn new(
+        erased_content: String,
+        error_message: String,
+        exit_code: i32,
+        max_erased_bytes: usize,
+        max_error_bytes: usize,
+    ) -> Self {
+        Self {
+            erased_content: truncate_tail(erased_content, max_erased_bytes),
+            error_message: truncate_tail(error_message, max_error_bytes),
+            exit_code,
+        }
+    }
+}
+
+/// Truncate a string to at most `max_bytes`, preserving the trailing
+/// portion (which is usually most relevant to an error). If truncated,
+/// a `[...] ` prefix is prepended.
+fn truncate_tail(s: String, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    // Find the nearest char boundary at or after the cut point.
+    let cut = s.len() - max_bytes;
+    let boundary = s.ceil_char_boundary(cut);
+    format!("[...] {}", &s[boundary..])
+}
+
+// ---------------------------------------------------------------------------
 // InferenceConfig
 // ---------------------------------------------------------------------------
 
@@ -242,6 +347,13 @@ pub struct InferenceConfig {
 
     /// Timeout for action execution (milliseconds).
     pub execution_timeout_ms: u64,
+
+    /// Proactive error prevention for repeated rollback failures.
+    /// When enabled, the engine tracks per-position failure history
+    /// and injects cumulative context about prior failed attempts
+    /// into the observation, giving the LLM awareness of what it
+    /// already tried and why those attempts failed.
+    pub rollback_error_prevention: RollbackErrorPrevention,
 }
 
 impl Default for InferenceConfig {
@@ -257,6 +369,7 @@ impl Default for InferenceConfig {
                 StopSequence::terminal("</s>"),
             ],
             execution_timeout_ms: 30_000,
+            rollback_error_prevention: RollbackErrorPrevention::default(),
         }
     }
 }
@@ -351,5 +464,60 @@ mod tests {
         assert_eq!(config.max_tokens, 2048);
         assert_eq!(config.max_rollback_retries, 3);
         assert_eq!(config.stop_sequences.len(), 2);
+        // Proactive error prevention is disabled by default.
+        assert!(!config.rollback_error_prevention.enabled);
+    }
+
+    #[test]
+    fn test_rollback_error_prevention_default() {
+        let rep = RollbackErrorPrevention::default();
+        assert!(!rep.enabled);
+        assert_eq!(rep.max_history_per_position, 3);
+        assert_eq!(rep.max_erased_content_bytes, 512);
+        assert_eq!(rep.max_error_message_bytes, 256);
+    }
+
+    #[test]
+    fn test_failure_record_truncates_erased_content() {
+        let long_content = "x".repeat(1000);
+        let record = FailureRecord::new(
+            long_content,
+            "error".into(),
+            1,
+            100, // max_erased_bytes
+            256,
+        );
+        // Should be truncated: "[...] " prefix + 100 bytes of trailing content.
+        assert!(record.erased_content.len() <= 100 + "[...] ".len());
+        assert!(record.erased_content.starts_with("[...] "));
+        assert_eq!(record.error_message, "error");
+    }
+
+    #[test]
+    fn test_failure_record_truncates_error_message() {
+        let long_error = "e".repeat(500);
+        let record = FailureRecord::new(
+            "content".into(),
+            long_error,
+            1,
+            512,
+            50, // max_error_bytes
+        );
+        assert!(record.error_message.len() <= 50 + "[...] ".len());
+        assert!(record.error_message.starts_with("[...] "));
+        assert_eq!(record.erased_content, "content");
+    }
+
+    #[test]
+    fn test_failure_record_no_truncation_when_within_limits() {
+        let record = FailureRecord::new(
+            "short content".into(),
+            "short error".into(),
+            0,
+            512,
+            256,
+        );
+        assert_eq!(record.erased_content, "short content");
+        assert_eq!(record.error_message, "short error");
     }
 }

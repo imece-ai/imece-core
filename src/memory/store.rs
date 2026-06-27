@@ -1,15 +1,43 @@
-//! # Memory Store
+//! # Memory Store — In-Memory Flat-Index
 //!
-//! Flat-index storage layer for memory nodes.
+//! Flat-index storage layer for memory nodes with brute-force cosine
+//! similarity retrieval. This is the baseline storage backend for the
+//! Chain-of-Memory subsystem.
 //!
-//! Initial implementation uses an in-memory `Vec<MemoryNode>` with brute-force
-//! cosine similarity retrieval. This is the correct baseline for <=10k nodes
-//! on low-VRAM devices where the full vector database is not yet justified.
+//! ## When to Use
+//!
+//! | Store | Best For | Performance |
+//! |-------|----------|-------------|
+//! | `MemoryStore` (this module) | ≤10k nodes, no persistence needed | O(n) retrieval, zero startup cost |
+//! | [`LanceMemoryStore`](super::lance_store) | >10k nodes, persistence required | ANN indexing, disk-backed |
+//!
+//! ## Usage
+//!
+//! ```rust
+//! use imece_core::memory::store::MemoryStore;
+//! use imece_core::memory::node::{MemoryNode, Role};
+//! use ndarray::Array1;
+//!
+//! let mut store = MemoryStore::new_in_memory(3).unwrap();
+//!
+//! let node = MemoryNode::new(
+//!     "Rust is a systems programming language.".into(),
+//!     Role::Agent,
+//!     Array1::from_vec(vec![0.9, 0.1, 0.0]),
+//! );
+//! store.insert(&node).unwrap();
+//!
+//! // Retrieve Top-K candidates for DMCE
+//! let query = Array1::from_vec(vec![1.0, 0.0, 0.0]);
+//! let results = store.top_k(&query, 5, &[]).unwrap();
+//! assert_eq!(results[0].node.text, "Rust is a systems programming language.");
+//! ```
 //!
 //! ## Persistent Backend: LanceDB
+//!
 //! When node count exceeds the brute-force threshold, swap the retrieval
-//! implementation to `LanceMemoryStore` (see [`super::lance_store`]) which
-//! uses LanceDB's native ANN index without changing the public API.
+//! implementation to [`LanceMemoryStore`](super::lance_store) which
+//! uses LanceDB's native ANN index without changing the DMCE API.
 
 use ndarray::Array1;
 

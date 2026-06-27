@@ -1,4 +1,31 @@
-//! Unified error types for the ImeceMemory subsystem.
+//! # Memory Error Types
+//!
+//! Unified error types for the Chain-of-Memory subsystem.
+//!
+//! All memory operations return [`MemoryResult<T>`] which wraps a
+//! `Result<T, MemoryError>`. Error variants cover the main failure modes:
+//!
+//! - **Dimension mismatches** between query embeddings and stored vectors
+//! - **Empty candidate pools** when DMCE has nothing to evolve
+//! - **Database errors** from the LanceDB persistence layer
+//! - **Serialization errors** during Arrow/JSON encoding
+//!
+//! ## Example
+//!
+//! ```rust
+//! use imece_core::memory::store::MemoryStore;
+//! use imece_core::memory::node::{MemoryNode, Role};
+//! use ndarray::Array1;
+//!
+//! let mut store = MemoryStore::new_in_memory(3).unwrap();
+//!
+//! // Inserting a node with the wrong dimension returns DimensionMismatch
+//! let bad_node = MemoryNode::new(
+//!     "wrong dim".into(), Role::User,
+//!     Array1::from_vec(vec![0.1, 0.2]),  // dim=2 vs expected 3
+//! );
+//! assert!(store.insert(&bad_node).is_err());
+//! ```
 
 use thiserror::Error;
 

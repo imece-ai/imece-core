@@ -1,15 +1,21 @@
 [package]
 name = "imece_core"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
+rust-version = "1.91.0"
 repository = "https://github.com/imece-ai/imece-core"
 homepage = "https://github.com/imece-ai"
-description = "IMECE v0.1.2 - Local-First Autonomous Agent Framework. Zero API dependency. Zero cloud lock-in. Full sovereignty."
+description = "IMECE v0.2.0 - Local-First Autonomous Agent Framework. Zero API dependency. Zero cloud lock-in. Full sovereignty."
 license = "AGPL-3.0-only"
 readme = "README.md"
 keywords = ["ai", "agent", "llm", "machine-learning", "local-first"]
 categories = ["artificial-intelligence", "asynchronous", "concurrency"]
 build = "build.rs"
+exclude = [
+    "/.github",
+#    "/assets",
+]
+
 
 [build-dependencies]
 cmake = "0.1"

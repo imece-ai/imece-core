@@ -19,6 +19,7 @@
 //! in a tight loop. On the real backend, this binds to llama.cpp's
 //! C-API for generation; here we define the protocol abstraction.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -188,9 +189,19 @@ where
         let mut session = InferenceSession::new();
         let mut retry_count = 0;
 
+        // Proactive error prevention: per-position failure history.
+        // Only allocated when the feature is enabled — zero overhead otherwise.
+        let prevention = &self.config.rollback_error_prevention;
+        let mut failure_history: Option<HashMap<usize, Vec<FailureRecord>>> =
+            if prevention.enabled {
+                Some(HashMap::new())
+            } else {
+                None
+            };
+
         info!(
-            "Inference started. prompt_len={}, max_tokens={}",
-            state.prompt_end, self.config.max_tokens
+            "Inference started. prompt_len={}, max_tokens={}, error_prevention={}",
+            state.prompt_end, self.config.max_tokens, prevention.enabled
         );
 
         // Step 1: Evaluate (prefill) the prompt.
@@ -288,15 +299,29 @@ where
                             // Determine rollback anchor (t_k).
                             let rollback_pos = error_token_hint.unwrap_or(payload.start_token_pos);
 
+                            // Capture the content about to be erased BEFORE the
+                            // rollback truncates the token buffer. This is the
+                            // model's "forgotten" output — critical for cumulative
+                            // observations so the LLM can see what it tried.
+                            let erased_content =
+                                state.text_range(rollback_pos, state.cache_position);
+
                             let target = RollbackTarget::new(
                                 state.seq_id,
                                 rollback_pos,
                                 state.cache_position,
                             );
 
-                            // Create observation text.
-                            let obs_text =
-                                format!("\nObservation: Error (exit_code={exit_code}): {stderr}\n");
+                            // Build the observation — cumulative if prevention is
+                            // enabled and there's prior history, plain otherwise.
+                            let obs_text = Self::build_observation(
+                                &mut failure_history,
+                                prevention,
+                                rollback_pos,
+                                &erased_content,
+                                &stderr,
+                                exit_code,
+                            );
                             let obs_tokens = self.backend.tokenize(&obs_text)?;
 
                             // Execute rollback.
@@ -330,15 +355,29 @@ where
                                 });
                             }
 
-                            // Rollback and inject timeout observation.
+                            let rollback_pos = payload.start_token_pos;
+
+                            // Capture erased content before rollback.
+                            let erased_content =
+                                state.text_range(rollback_pos, state.cache_position);
+
                             let target = RollbackTarget::new(
                                 state.seq_id,
-                                payload.start_token_pos,
+                                rollback_pos,
                                 state.cache_position,
                             );
-                            let obs_text = format!(
-                                "\nObservation: Execution timed out after {timeout_ms}ms. \
-                                 Simplify the approach.\n"
+
+                            let timeout_error =
+                                format!("Execution timed out after {timeout_ms}ms");
+
+                            // Build observation — cumulative or plain.
+                            let obs_text = Self::build_observation(
+                                &mut failure_history,
+                                prevention,
+                                rollback_pos,
+                                &erased_content,
+                                &timeout_error,
+                                -1, // Conventional exit code for timeout.
                             );
                             let obs_tokens = self.backend.tokenize(&obs_text)?;
 
@@ -346,7 +385,7 @@ where
                                 self.kv_cache.rollback(&mut state, &target, &obs_tokens)?;
 
                             session.events.push(SessionEvent::Rollback {
-                                position: payload.start_token_pos,
+                                position: rollback_pos,
                                 tokens_erased: erased,
                                 retry_number: retry_count,
                             });
@@ -372,6 +411,89 @@ where
         session.total_tokens_erased = self.kv_cache.total_tokens_erased;
 
         Ok(session)
+    }
+
+    /// Build the observation text for a rollback.
+    ///
+    /// When proactive error prevention is enabled, this records the failure
+    /// in the per-position history and synthesizes a cumulative observation
+    /// that shows the model what it tried and why each attempt failed.
+    ///
+    /// When disabled, produces the same plain observation as the original
+    /// code path.
+    fn build_observation(
+        failure_history: &mut Option<HashMap<usize, Vec<FailureRecord>>>,
+        prevention: &RollbackErrorPrevention,
+        rollback_pos: usize,
+        erased_content: &str,
+        error_message: &str,
+        exit_code: i32,
+    ) -> String {
+        // Fast path: feature disabled — no tracking, plain observation.
+        let Some(history) = failure_history.as_mut() else {
+            return format!(
+                "\nObservation: Error (exit_code={exit_code}): {error_message}\n"
+            );
+        };
+
+        // Record this failure.
+        let records = history.entry(rollback_pos).or_default();
+
+        // Enforce max_history_per_position cap (drop oldest).
+        if records.len() >= prevention.max_history_per_position {
+            records.remove(0);
+        }
+
+        records.push(FailureRecord::new(
+            erased_content.to_owned(),
+            error_message.to_owned(),
+            exit_code,
+            prevention.max_erased_content_bytes,
+            prevention.max_error_message_bytes,
+        ));
+
+        // Build observation.
+        let attempt_count = records.len();
+
+        if attempt_count <= 1 {
+            // First failure at this position — include current error with
+            // the erased content so the model knows what it wrote.
+            let truncated_content = if erased_content.len() > prevention.max_erased_content_bytes {
+                let boundary =
+                    erased_content.ceil_char_boundary(
+                        erased_content.len() - prevention.max_erased_content_bytes,
+                    );
+                format!("[...] {}", &erased_content[boundary..])
+            } else {
+                erased_content.to_owned()
+            };
+
+            format!(
+                "\nObservation: Error (exit_code={exit_code}): {error_message}\n\
+                 Your previous output was: \u{ab}{truncated_content}\u{bb}\n"
+            )
+        } else {
+            // Repeated failure — cumulative observation with full history.
+            let mut obs = format!(
+                "\nObservation: Error (exit_code={exit_code}): {error_message}\n\
+                 [!] This position has failed {attempt_count} time(s). \
+                 You MUST use a substantially different approach.\n\
+                 Previous failed attempts:\n"
+            );
+
+            for (i, record) in records.iter().enumerate() {
+                obs.push_str(&format!(
+                    "  [Attempt {}] Generated: \u{ab}{}\u{bb} \u{2192} \
+                     Error (exit_code={}): {}\n",
+                    i + 1,
+                    record.erased_content,
+                    record.exit_code,
+                    record.error_message,
+                ));
+            }
+
+            obs
+        }
     }
 
     /// Generate tokens until a stop sequence is matched or max tokens reached.
@@ -522,4 +644,491 @@ pub enum SessionEvent {
 
     /// A non-fatal warning.
     Warning(String),
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::error::InferenceResult;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    // ── Mock LLM Backend ──────────────────────────────────────────────
+
+    /// A mock backend that returns a predetermined sequence of tokens,
+    /// then a terminal stop sequence.
+    struct MockBackend {
+        /// Tokens to emit, in order. After exhaustion, returns EOS.
+        tokens: Mutex<Vec<Token>>,
+    }
+
+    impl MockBackend {
+        fn new(tokens: Vec<Token>) -> Self {
+            Self {
+                tokens: Mutex::new(tokens),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmBackend for MockBackend {
+        fn tokenize(&self, text: &str) -> InferenceResult<Vec<Token>> {
+            // Simple tokenizer: one token per character.
+            Ok(text
+                .chars()
+                .enumerate()
+                .map(|(i, c)| Token {
+                    id: i as u32,
+                    text: c.to_string(),
+                })
+                .collect())
+        }
+
+        fn detokenize(&self, tokens: &[Token]) -> InferenceResult<String> {
+            Ok(tokens.iter().map(|t| t.text.as_str()).collect())
+        }
+
+        async fn generate_next(
+            &self,
+            _state: &GenerationState,
+            _config: &InferenceConfig,
+        ) -> InferenceResult<Option<Token>> {
+            let mut tokens = self.tokens.lock().unwrap();
+            if tokens.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(tokens.remove(0)))
+            }
+        }
+
+        async fn evaluate_tokens(
+            &self,
+            _seq_id: u32,
+            _position: usize,
+            _tokens: &[Token],
+        ) -> InferenceResult<()> {
+            Ok(())
+        }
+    }
+
+    // ── Mock KV-Cache Manager ─────────────────────────────────────────
+
+    /// A mock KV-Cache that accepts all operations without tracking real
+    /// cache state. In the real system, KV-Cache length grows with token
+    /// generation — the mock can't observe that, so `seq_len()` returns
+    /// `usize::MAX` to always pass bounds checks. Bounds-checking
+    /// correctness is covered by `KvCacheController`'s own unit tests.
+    struct MockKvCache;
+
+    impl MockKvCache {
+        fn new(_len: usize) -> Self {
+            Self
+        }
+    }
+
+    impl KvCacheManager for MockKvCache {
+        fn seq_rm(&mut self, _seq_id: u32, _p0: usize, _p1: usize) -> InferenceResult<()> {
+            Ok(())
+        }
+
+        fn seq_len(&self, _seq_id: u32) -> usize {
+            // Always pass bounds checks — the mock doesn't track
+            // token generation, so it can't report a real length.
+            usize::MAX
+        }
+
+        fn inject_tokens(
+            &mut self,
+            _seq_id: u32,
+            _position: usize,
+            _tokens: &[Token],
+        ) -> InferenceResult<()> {
+            Ok(())
+        }
+
+        fn clear_all(&mut self) -> InferenceResult<()> {
+            Ok(())
+        }
+    }
+
+    // ── Mock Executor ─────────────────────────────────────────────────
+
+    /// A mock executor that returns a configurable sequence of outcomes.
+    struct MockExecutor {
+        outcomes: Mutex<Vec<ExecutionOutcome>>,
+    }
+
+    impl MockExecutor {
+        fn new(outcomes: Vec<ExecutionOutcome>) -> Self {
+            Self {
+                outcomes: Mutex::new(outcomes),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ActionExecutor for MockExecutor {
+        async fn execute(
+            &self,
+            _payload: &ActionPayload,
+            _timeout: Duration,
+        ) -> InferenceResult<ExecutionOutcome> {
+            let mut outcomes = self.outcomes.lock().unwrap();
+            if outcomes.is_empty() {
+                Ok(ExecutionOutcome::Success {
+                    stdout: String::new(),
+                })
+            } else {
+                Ok(outcomes.remove(0))
+            }
+        }
+    }
+
+    // ── Helper: build tokens for an action block ──────────────────────
+
+    fn action_tokens(code: &str) -> Vec<Token> {
+        let text = format!("<action type=\"python\">{}\n</action>", code);
+        text.chars()
+            .enumerate()
+            .map(|(i, c)| Token {
+                id: (100 + i) as u32,
+                text: c.to_string(),
+            })
+            .collect()
+    }
+
+    // ── Tests ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_build_observation_disabled() {
+        // When prevention is disabled, failure_history is None.
+        let prevention = RollbackErrorPrevention {
+            enabled: false,
+            ..Default::default()
+        };
+        let mut history: Option<HashMap<usize, Vec<FailureRecord>>> = None;
+
+        let obs = InferenceEngine::<MockBackend, MockKvCache, MockExecutor>::build_observation(
+            &mut history,
+            &prevention,
+            50,
+            "print(x)",
+            "NameError: name 'x' is not defined",
+            1,
+        );
+
+        // Should be the plain observation format.
+        assert!(obs.contains("Error (exit_code=1)"));
+        assert!(obs.contains("NameError"));
+        // Should NOT contain cumulative context.
+        assert!(!obs.contains("failed"));
+        assert!(!obs.contains("Attempt"));
+        assert!(!obs.contains("previous output"));
+        // History should remain None.
+        assert!(history.is_none());
+    }
+
+    #[test]
+    fn test_build_observation_first_failure() {
+        let prevention = RollbackErrorPrevention {
+            enabled: true,
+            ..Default::default()
+        };
+        let mut history: Option<HashMap<usize, Vec<FailureRecord>>> = Some(HashMap::new());
+
+        let obs = InferenceEngine::<MockBackend, MockKvCache, MockExecutor>::build_observation(
+            &mut history,
+            &prevention,
+            50,
+            "print(x)",
+            "NameError: name 'x' is not defined",
+            1,
+        );
+
+        // First failure includes erased content but no cumulative history.
+        assert!(obs.contains("Error (exit_code=1)"));
+        assert!(obs.contains("NameError"));
+        assert!(obs.contains("print(x)"));
+        assert!(obs.contains("previous output"));
+        assert!(!obs.contains("Attempt"));
+        // History should have one record at position 50.
+        let records = history.as_ref().unwrap().get(&50).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].exit_code, 1);
+    }
+
+    #[test]
+    fn test_build_observation_cumulative() {
+        let prevention = RollbackErrorPrevention {
+            enabled: true,
+            max_history_per_position: 5,
+            ..Default::default()
+        };
+        let mut history: Option<HashMap<usize, Vec<FailureRecord>>> = Some(HashMap::new());
+
+        // First failure.
+        let _ = InferenceEngine::<MockBackend, MockKvCache, MockExecutor>::build_observation(
+            &mut history,
+            &prevention,
+            50,
+            "print(x)",
+            "NameError: name 'x' is not defined",
+            1,
+        );
+
+        // Second failure at the same position.
+        let obs = InferenceEngine::<MockBackend, MockKvCache, MockExecutor>::build_observation(
+            &mut history,
+            &prevention,
+            50,
+            "print(foo)",
+            "NameError: name 'foo' is not defined",
+            1,
+        );
+
+        // Should include cumulative history.
+        assert!(obs.contains("failed 2 time(s)"));
+        assert!(obs.contains("[Attempt 1]"));
+        assert!(obs.contains("[Attempt 2]"));
+        assert!(obs.contains("print(x)"));
+        assert!(obs.contains("print(foo)"));
+        assert!(obs.contains("MUST use a substantially different approach"));
+
+        // Third failure.
+        let obs = InferenceEngine::<MockBackend, MockKvCache, MockExecutor>::build_observation(
+            &mut history,
+            &prevention,
+            50,
+            "import os; print(os.getcwd())",
+            "SyntaxError: unexpected token",
+            1,
+        );
+
+        assert!(obs.contains("failed 3 time(s)"));
+        assert!(obs.contains("[Attempt 1]"));
+        assert!(obs.contains("[Attempt 2]"));
+        assert!(obs.contains("[Attempt 3]"));
+    }
+
+    #[test]
+    fn test_build_observation_different_positions() {
+        let prevention = RollbackErrorPrevention {
+            enabled: true,
+            ..Default::default()
+        };
+        let mut history: Option<HashMap<usize, Vec<FailureRecord>>> = Some(HashMap::new());
+
+        // Failure at position 50.
+        let _ = InferenceEngine::<MockBackend, MockKvCache, MockExecutor>::build_observation(
+            &mut history,
+            &prevention,
+            50,
+            "code_A",
+            "error_A",
+            1,
+        );
+
+        // Failure at position 100 — different position, no history here.
+        let obs = InferenceEngine::<MockBackend, MockKvCache, MockExecutor>::build_observation(
+            &mut history,
+            &prevention,
+            100,
+            "code_B",
+            "error_B",
+            2,
+        );
+
+        // Should be a first-failure observation (no cumulative history at pos 100).
+        assert!(obs.contains("previous output"));
+        assert!(obs.contains("code_B"));
+        assert!(!obs.contains("code_A"));
+        assert!(!obs.contains("Attempt"));
+
+        // Verify both positions are tracked independently.
+        let h = history.as_ref().unwrap();
+        assert_eq!(h.get(&50).unwrap().len(), 1);
+        assert_eq!(h.get(&100).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_build_observation_max_history_cap() {
+        let prevention = RollbackErrorPrevention {
+            enabled: true,
+            max_history_per_position: 2, // Only keep 2 records.
+            ..Default::default()
+        };
+        let mut history: Option<HashMap<usize, Vec<FailureRecord>>> = Some(HashMap::new());
+
+        // Three failures at position 50.
+        for i in 0..3 {
+            let _ = InferenceEngine::<MockBackend, MockKvCache, MockExecutor>::build_observation(
+                &mut history,
+                &prevention,
+                50,
+                &format!("code_{i}"),
+                &format!("error_{i}"),
+                1,
+            );
+        }
+
+        // Should only have 2 records (oldest dropped).
+        let records = history.as_ref().unwrap().get(&50).unwrap();
+        assert_eq!(records.len(), 2);
+        // The oldest record (code_0) should be gone.
+        assert!(records[0].erased_content.contains("code_1"));
+        assert!(records[1].erased_content.contains("code_2"));
+    }
+
+    #[test]
+    fn test_build_observation_timeout_tracking() {
+        let prevention = RollbackErrorPrevention {
+            enabled: true,
+            ..Default::default()
+        };
+        let mut history: Option<HashMap<usize, Vec<FailureRecord>>> = Some(HashMap::new());
+
+        // First: a normal failure.
+        let _ = InferenceEngine::<MockBackend, MockKvCache, MockExecutor>::build_observation(
+            &mut history,
+            &prevention,
+            50,
+            "long_running_code()",
+            "NameError",
+            1,
+        );
+
+        // Second: a timeout at the same position.
+        let obs = InferenceEngine::<MockBackend, MockKvCache, MockExecutor>::build_observation(
+            &mut history,
+            &prevention,
+            50,
+            "even_longer_code()",
+            "Execution timed out after 30000ms",
+            -1, // Timeout convention.
+        );
+
+        // Should show cumulative history mixing failure types.
+        assert!(obs.contains("failed 2 time(s)"));
+        assert!(obs.contains("[Attempt 1]"));
+        assert!(obs.contains("NameError"));
+        assert!(obs.contains("[Attempt 2]"));
+        assert!(obs.contains("timed out"));
+    }
+
+    #[test]
+    fn test_build_observation_erased_content_truncation() {
+        let prevention = RollbackErrorPrevention {
+            enabled: true,
+            max_erased_content_bytes: 20,
+            max_error_message_bytes: 256,
+            ..Default::default()
+        };
+        let mut history: Option<HashMap<usize, Vec<FailureRecord>>> = Some(HashMap::new());
+
+        let long_content = "x".repeat(1000);
+        let obs = InferenceEngine::<MockBackend, MockKvCache, MockExecutor>::build_observation(
+            &mut history,
+            &prevention,
+            50,
+            &long_content,
+            "error",
+            1,
+        );
+
+        // The erased content in the observation should be truncated.
+        assert!(obs.contains("[...]"));
+        // The full 1000-char content should NOT be present.
+        assert!(!obs.contains(&"x".repeat(1000)));
+    }
+
+    #[tokio::test]
+    async fn test_engine_disabled_prevention_plain_observation() {
+        // Two action blocks: first fails, second succeeds.
+        let mut tokens = action_tokens("print(x)");
+        tokens.extend(action_tokens("print(42)"));
+
+        let backend = MockBackend::new(tokens);
+        let kv = MockKvCache::new(1000);
+        let executor = MockExecutor::new(vec![
+            ExecutionOutcome::Failure {
+                exit_code: 1,
+                stderr: "NameError".into(),
+                error_token_hint: None,
+            },
+            ExecutionOutcome::Success {
+                stdout: "42".into(),
+            },
+        ]);
+
+        let config = InferenceConfig {
+            max_rollback_retries: 3,
+            rollback_error_prevention: RollbackErrorPrevention {
+                enabled: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let controller = KvCacheController::new(kv);
+        let mut engine = InferenceEngine::new(backend, controller, executor, config);
+
+        let session = engine.run("test").await.unwrap();
+
+        // Should have had one rollback.
+        assert_eq!(session.total_rollbacks, 1);
+        // Should have events for both executions.
+        let action_events: Vec<_> = session
+            .events
+            .iter()
+            .filter(|e| matches!(e, SessionEvent::ActionExecuted { .. }))
+            .collect();
+        assert_eq!(action_events.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_engine_enabled_prevention_tracks_failures() {
+        // Three action blocks: first two fail at same position, third succeeds.
+        let mut tokens = action_tokens("print(x)");
+        tokens.extend(action_tokens("print(y)"));
+        tokens.extend(action_tokens("print(42)"));
+
+        let backend = MockBackend::new(tokens);
+        let kv = MockKvCache::new(1000);
+        let executor = MockExecutor::new(vec![
+            ExecutionOutcome::Failure {
+                exit_code: 1,
+                stderr: "NameError: x".into(),
+                error_token_hint: None,
+            },
+            ExecutionOutcome::Failure {
+                exit_code: 1,
+                stderr: "NameError: y".into(),
+                error_token_hint: None,
+            },
+            ExecutionOutcome::Success {
+                stdout: "42".into(),
+            },
+        ]);
+
+        let config = InferenceConfig {
+            max_rollback_retries: 5,
+            rollback_error_prevention: RollbackErrorPrevention {
+                enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let controller = KvCacheController::new(kv);
+        let mut engine = InferenceEngine::new(backend, controller, executor, config);
+
+        let session = engine.run("test").await.unwrap();
+
+        // Should have had two rollbacks.
+        assert_eq!(session.total_rollbacks, 2);
+    }
 }
